@@ -23,6 +23,7 @@ use std::process::Command;
 
 pub(crate) struct WaylandEmptyAppInfoProvider {}
 pub(crate) struct WaylandKDEAppInfoProvider {}
+pub(crate) struct WaylandHyprlandAppInfoProvider {}
 pub(crate) struct WaylandNiriAppInfoProvider {}
 
 fn empty_app_info() -> AppInfo {
@@ -30,6 +31,23 @@ fn empty_app_info() -> AppInfo {
         title: None,
         exec: None,
         class: None,
+    }
+}
+
+fn get_exec_from_pid(pid: &str) -> Option<String> {
+    match Command::new("readlink")
+        .arg(format!("/proc/{pid}/exe"))
+        .output()
+    {
+        Ok(out) => {
+            let mut __stdout = out.stdout;
+            if !__stdout.is_empty() {
+                __stdout.pop();
+            }
+            let exec_ = String::from_utf8(__stdout).expect("Error decoding from utf8");
+            Some(exec_)
+        }
+        Err(_) => None,
     }
 }
 
@@ -99,26 +117,58 @@ impl AppInfoProvider for WaylandKDEAppInfoProvider {
                     __stdout.pop();
                 }
                 let pid_ = String::from_utf8(__stdout).expect("Error decoding from utf8");
-                match Command::new("readlink")
-                    .arg(format!("/proc/{pid_}/exe"))
-                    .output()
-                {
-                    Ok(out) => {
-                        let mut __stdout = out.stdout;
-                        if !__stdout.is_empty() {
-                            __stdout.pop();
-                        }
-                        let exec_ = String::from_utf8(__stdout).expect("Error decoding from utf8");
-                        Some(exec_)
-                    }
-                    Err(_) => None,
-                }
+                get_exec_from_pid(&pid_)
             }
             Err(_) => None,
         };
 
         AppInfo { title, exec, class }
     }
+}
+
+// for Hyprland with hyprctl
+impl WaylandHyprlandAppInfoProvider {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl AppInfoProvider for WaylandHyprlandAppInfoProvider {
+    fn get_info(&self) -> AppInfo {
+        if let Ok(out) = Command::new("hyprctl")
+            .arg("activewindow")
+            .arg("-j")
+            .output()
+        {
+            return parse_hyprctl_activewindow(&out.stdout);
+        }
+
+        // hyprctl is checked once in the startup of main.rs
+        // we do not need to log it here again
+        empty_app_info()
+    }
+}
+
+fn parse_hyprctl_activewindow(stdout: &[u8]) -> AppInfo {
+    let value: serde_json::Value = match serde_json::from_slice(stdout) {
+        Ok(value) => value,
+        Err(_) => return empty_app_info(),
+    };
+
+    let title = value
+        .get("title")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string());
+    let class = value
+        .get("class")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string());
+    let exec = value
+        .get("pid")
+        .and_then(|value| value.as_i64())
+        .and_then(|value| get_exec_from_pid(&value.to_string()));
+
+    AppInfo { title, exec, class }
 }
 
 // for Niri
@@ -149,21 +199,7 @@ impl AppInfoProvider for WaylandNiriAppInfoProvider {
                     class = Some(rest.trim().trim_matches('"').to_string());
                 } else if let Some(rest) = trimmed.strip_prefix("PID:") {
                     let pid_ = rest.trim().to_string();
-                    exec = match Command::new("readlink")
-                        .arg(format!("/proc/{pid_}/exe"))
-                        .output()
-                    {
-                        Ok(out) => {
-                            let mut __stdout = out.stdout;
-                            if !__stdout.is_empty() {
-                                __stdout.pop();
-                            }
-                            let exec_ =
-                                String::from_utf8(__stdout).expect("Error decoding from utf8");
-                            Some(exec_)
-                        }
-                        Err(_) => None,
-                    }
+                    exec = get_exec_from_pid(&pid_);
                 }
             }
 

@@ -70,7 +70,30 @@ pub fn get_provider() -> Result<Box<dyn AppInfoProvider>> {
 pub fn get_provider() -> Result<Box<dyn AppInfoProvider>> {
     use std::env;
 
-    if let Ok(value) = env::var("XDG_SESSION_DESKTOP") {
+    let desktop = env::var("XDG_SESSION_DESKTOP").or_else(|_| env::var("XDG_CURRENT_DESKTOP"));
+    let is_hyprland = env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
+        || desktop
+            .as_deref()
+            .map(|value| value.eq_ignore_ascii_case("hyprland"))
+            .unwrap_or(false);
+
+    if is_hyprland {
+        // try to invoke `hyprctl` to see if you have it or not.
+        use std::process::Command;
+        if Command::new("hyprctl")
+            .arg("activewindow")
+            .arg("-j")
+            .output()
+            .is_ok()
+        {
+            info!("using WaylandHyprlandAppInfoProvider");
+            return Ok(Box::new(wayland::WaylandHyprlandAppInfoProvider::new()));
+        }
+        info!("hyprctl missing or not available for the current wayland WM.");
+        // since we dont have `hyprctl` anyway, just output empty info
+    }
+
+    if let Ok(value) = desktop {
         match value.to_lowercase().as_str() {
             "niri" => {
                 info!("using WaylandNiriAppInfoProvider");

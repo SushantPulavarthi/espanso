@@ -640,6 +640,18 @@ SubCommand::with_name("install")
             info!("kdotool missing or not available for the current wayland DE.");
         }
 
+        // try to invoke `hyprctl` to see if you have it or not.
+        #[cfg(target_os = "linux")]
+        if Command::new("hyprctl")
+            .arg("activewindow")
+            .arg("-j")
+            .output()
+            .is_ok()
+        {
+        } else {
+            info!("hyprctl missing or not available for the current wayland WM.");
+        }
+
         if let Some(args) = matches.subcommand_matches(&handler.subcommand) {
             cli_args.cli_args = Some(args.clone());
         }
